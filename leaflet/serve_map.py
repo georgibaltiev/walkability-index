@@ -37,7 +37,7 @@ def serve(html_file: str, port: int = 8000):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Serve building polygons map')
-    parser.add_argument('--html', default='output/buildings_map.html',
+    parser.add_argument('--html', default='output/index.html',
                        help='Path to HTML map file')
     parser.add_argument('--port', type=int, default=8000,
                        help='Port to serve on')
