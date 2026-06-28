@@ -13,6 +13,7 @@ from typing import Optional, Tuple
 import geopandas as gpd
 import json
 import argparse
+import re
 import pandas as pd
 from shapely.geometry import LineString, Point
 
@@ -59,10 +60,10 @@ def _load_pedestrian_network(network_geojson_path: str):
     return adjacency, segments, network_crs
 
 
-def _project_point(point: PointLike, source_crs: str, target_crs: str) -> Point:
+def _project_point(point: PointLike, source_crs: str, target_crs: ) -> Point:
     """Project a lon/lat point into the network CRS."""
     point_gs = gpd.GeoSeries([Point(point[0], point[1])], crs=source_crs)
-    return point_gs.to_crs(target_crs).iloc[0]
+    return target_crs.iloc[0]
 
 
 def _nearest_segment(point: Point, segments):
@@ -166,7 +167,6 @@ def _residential_mask(gdf) -> gpd.pd.Series:
 
     return mask
 
-
 def _metric_crs_for_layers(*layers) -> str:
     """Pick a projected CRS that works for the provided layers."""
     for layer in layers:
@@ -188,24 +188,103 @@ def _metric_crs_for_layers(*layers) -> str:
 
     return "EPSG:3857"
 
+def _normalize_text(value) -> str:
+    """Normalize Bulgarian address text for fuzzy matching."""
+    if value is None:
+        return ""
+    text = str(value).lower()
+    text = text.replace("\u00a0", " ")
+    text = re.sub(r"[\"'.,;:()\[\]{}]", " ", text)
+    text = re.sub(r"\b(ул|бул|жк|ж\.к|кв|гр|район)\.?\b", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
-def _sanitize_gdf_for_json(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-    """Return a copy of the GeoDataFrame with JSON-unsafe types converted to strings.
 
-    Converts datetime-like columns and other non-primitive objects to strings so
-    that `GeoDataFrame.to_json()` doesn't fail on Timestamp objects.
-    """
-    df = gdf.copy()
-    for col in df.columns:
+def _load_geo_or_address_records(path: str):
+    """Load either a geospatial file or a plain JSON list of address records."""
+    suffix = Path(path).suffix.lower()
+    if suffix in {".geojson", ".json", ".gpkg", ".shp"}:
         try:
-            if pd.api.types.is_datetime64_any_dtype(df[col].dtype):
-                df[col] = df[col].astype(str)
-            elif df[col].dtype == object:
-                df[col] = df[col].apply(lambda v: v.isoformat() if hasattr(v, 'isoformat') else (v if isinstance(v, (str, int, float, bool)) or v is None else str(v)))
+            return gpd.read_file(path)
         except Exception:
-            # best-effort: stringify problematic column
-            df[col] = df[col].apply(lambda v: str(v) if v is not None else None)
-    return df
+            if suffix != ".json":
+                raise
+
+    with open(path, "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+    if isinstance(data, dict) and "features" in data:
+        return gpd.GeoDataFrame.from_features(data["features"])
+    if isinstance(data, list):
+        return data
+    raise ValueError(f"Unsupported schools file format: {path}")
+
+
+def _resolve_address_records_to_points(records, buildings_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Resolve address-based records to point geometries using nearby building centroids."""
+    if records is None:
+        return None
+
+    if isinstance(records, gpd.GeoDataFrame):
+        return records
+
+    if not records:
+        return gpd.GeoDataFrame(records, geometry=[], crs=buildings_gdf.crs)
+
+    address_index = []
+    for idx, building in buildings_gdf.iterrows():
+        building_tokens = [
+            _normalize_text(building.get("immaddr")),
+            _normalize_text(building.get("strename")),
+        ]
+        building_number = _normalize_text(building.get("strnum"))
+        building_tokens = [token for token in building_tokens if token]
+        if not building_tokens:
+            continue
+
+        address_index.append(
+            {
+                "idx": idx,
+                "text": " ".join(building_tokens + ([building_number] if building_number else [])),
+            }
+        )
+
+    geometries = []
+    resolved_rows = []
+    for record in records:
+        street = _normalize_text(record.get("ul"))
+        number = _normalize_text(record.get("nomer"))
+        hint = _normalize_text(record.get("zabelezhka"))
+
+        if not street and not hint:
+            continue
+
+        best_idx = None
+        for candidate in address_index:
+            candidate_text = candidate["text"]
+            if street and street not in candidate_text:
+                continue
+            if number and number not in candidate_text and not re.search(rf"\b{re.escape(number)}\b", candidate_text):
+                continue
+            best_idx = candidate["idx"]
+            break
+
+        if best_idx is None and hint:
+            for candidate in address_index:
+                if hint in candidate["text"]:
+                    best_idx = candidate["idx"]
+                    break
+
+        if best_idx is None:
+            continue
+
+        resolved_rows.append(record)
+        geometries.append(buildings_gdf.loc[best_idx].geometry.centroid)
+
+    if not resolved_rows:
+        return gpd.GeoDataFrame([], geometry=[], crs=buildings_gdf.crs)
+
+    resolved = gpd.GeoDataFrame(resolved_rows, geometry=geometries, crs=buildings_gdf.crs)
+    return resolved
 
 
 def add_green_area_proximity(
@@ -237,17 +316,17 @@ def add_green_area_proximity(
     schools_gdf = None
     if Path(schools_path).exists():
         try:
-            schools_gdf = gpd.read_file(schools_path)
+            schools_gdf = _load_geo_or_address_records(schools_path)
         except Exception:
-            print(f"Warning: unable to read schools file as a GeoDataFrame: {schools_path}; skipping")
+            print(f"Warning: unable to read schools file: {schools_path}; skipping")
             schools_gdf = None
 
     kindergartens_gdf = None
     if Path(kindergartens_path).exists():
         try:
-            kindergartens_gdf = gpd.read_file(kindergartens_path)
+            kindergartens_gdf = _load_geo_or_address_records(kindergartens_path)
         except Exception:
-            print(f"Warning: unable to read kindergartens file as a GeoDataFrame: {kindergartens_path}; skipping")
+            print(f"Warning: unable to read kindergartens file: {kindergartens_path}; skipping")
             kindergartens_gdf = None
 
     optional_layers = [green_gdf]
@@ -262,6 +341,8 @@ def add_green_area_proximity(
     projected_buildings = buildings_gdf.to_crs(buildings_crs)
     projected_green = green_gdf.to_crs(buildings_crs)
     projected_supermarkets = supermarkets_gdf.to_crs(buildings_crs) if supermarkets_gdf is not None else None
+    schools_gdf = _resolve_address_records_to_points(schools_gdf, projected_buildings)
+    kindergartens_gdf = _resolve_address_records_to_points(kindergartens_gdf, projected_buildings)
 
     residential_mask = _residential_mask(projected_buildings)
     projected_buildings["is_residential"] = residential_mask
@@ -337,8 +418,6 @@ def add_green_area_proximity(
     )
 
 
-
-
 def parse_polygons(shp_path: str, output_geojson: Optional[str] = None,
                    output_html: Optional[str] = None, max_features: Optional[int] = None,
                    filter_type: Optional[str] = None,
@@ -369,17 +448,6 @@ def parse_polygons(shp_path: str, output_geojson: Optional[str] = None,
     print(f"Total features: {len(gdf)}")
     print(f"CRS: {gdf.crs}")
 
-    # Filter by type if specified
-    if filter_type:
-        if '*' in filter_type:
-            # Wildcard filtering
-            pattern = filter_type.replace('*', '.*')
-            gdf = gdf[gdf['functype'].str.contains(pattern, case=False, regex=True, na=False)]
-            print(f"Filtered to {len(gdf)} features matching '{filter_type}'")
-        else:
-            gdf = gdf[gdf['functype'] == filter_type]
-            print(f"Filtered to {len(gdf)} features of type '{filter_type}'")
-
     # Limit features if specified
     if max_features:
         gdf = gdf.head(max_features)
@@ -404,161 +472,17 @@ def parse_polygons(shp_path: str, output_geojson: Optional[str] = None,
 
     green_areas_geojson = None
     supermarkets_geojson = None
-    if output_html:
-        green_areas_geojson = json.loads(_sanitize_gdf_for_json(green_areas_wgs84).to_json())
-        if supermarkets_wgs84 is not None:
-            supermarkets_geojson = json.loads(_sanitize_gdf_for_json(supermarkets_wgs84).to_json())
-        else:
-            supermarkets_geojson = None
+    schools_geojson = None
+    kindergartens_geojson = None
 
-    # Save GeoJSON if requested
+    geojson_filename = None
     if output_geojson:
         print(f"Saving GeoJSON to: {output_geojson}")
         with open(output_geojson, 'w', encoding='utf-8') as f:
             json.dump(geojson, f, ensure_ascii=False, indent=2)
-
-    # Generate HTML map if requested
-    if output_html:
-        _generate_leaflet_map(
-            geojson, green_areas_geojson, supermarkets_geojson, schools_geojson, kindergartens_geojson, output_html, gdf_wgs84
-        )
+        geojson_filename = Path(output_geojson).name
 
     return geojson
-
-
-def _generate_leaflet_map(geojson: dict, green_areas_geojson: dict, supermarkets_geojson: dict, schools_geojson: dict, kindergartens_geojson: dict, output_path: str, gdf) -> None:
-    """Generate interactive Leaflet map HTML."""
-    print(f"Generating Leaflet map: {output_path}")
-
-    bounds = gdf.total_bounds  # minx, miny, maxx, maxy
-    center_lat = (bounds[1] + bounds[3]) / 2
-    center_lon = (bounds[0] + bounds[2]) / 2
-    html_content = f"""
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Building Polygons Visualization</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <style>
-        * {{ margin: 0; padding: 0; }}
-        body {{ font: 14px/1.5 "Helvetica Neue", Arial, Helvetica, sans-serif; }}
-        #map {{ position: absolute; top: 0; bottom: 0; width: 100%; }}
-        .info {{
-            padding: 6px 8px;
-            font: 14px Arial, Helvetica, sans-serif;
-            background: white;
-            background: rgba(255,255,255,0.8);
-            box-shadow: 0 0 15px rgba(0,0,0,0.2);
-            border-radius: 5px;
-        }}
-        .info h4 {{ margin: 0 0 5px 0; color: #777; }}
-        .legend {{
-            line-height: 18px;
-            color: #555;
-        }}
-        .legend i {{
-            width: 18px;
-            height: 18px;
-            float: left;
-            margin-right: 8px;
-            opacity: 0.7;
-        }}
-    </style>
-</head>
-<body>
-    <div id="map"></div>
-    <script>
-        var map = L.map('map').setView([{center_lat}, {center_lon}], 12);
-
-        L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-            maxZoom: 19
-        }}).addTo(map);
-
-        var buildingsData = {json.dumps(geojson)};
-        var supermarketsData = {json.dumps(supermarkets_geojson) if supermarkets_geojson is not None else 'null'};
-        var schoolsData = {json.dumps(schools_geojson) if schools_geojson is not None else 'null'};
-        var kindergartensData = {json.dumps(kindergartens_geojson) if kindergartens_geojson is not None else 'null'};
-
-        function getColor(feature) {{
-            var funccode = Number(feature.properties.funccode);
-            switch(funccode) {{
-                case 1101: return '#FF6B6B';  // Residential
-                case 1102: return '#4ECDC4';  // Commercial
-                case 1103: return '#45B7D1';  // Industrial
-                case 1104: return '#96CEB4';  // Agricultural
-                default: return '#CCCCCC';
-            }}
-        }}
-
-        function getResidentialColor(distance) {{
-            if (distance === null || distance === undefined || isNaN(distance)) {{
-                return '#D8D8D8';
-            }}
-            if (distance <= 100) return '#1B5E20';
-            if (distance <= 250) return '#43A047';
-            if (distance <= 500) return '#8BC34A';
-            if (distance <= 1000) return '#FDD835';
-            return '#EF6C00';
-        }}
-
-        function style(feature) {{
-            var isResidential = Boolean(feature.properties.is_residential);
-            var distance = feature.properties.access_distance_m;
-            return {{
-                fillColor: isResidential ? getResidentialColor(distance) : getColor(feature),
-                weight: 1,
-                opacity: 0.5,
-                color: '#333',
-                dashArray: '0',
-                fillOpacity: 0.6
-            }};
-        }}
-
-        function onEachFeature(feature, layer) {{
-            var props = feature.properties;
-            var popupContent = '<div style="font-size: 12px; max-width: 250px;">' +
-                '<b>Building Info</b><br/>' +
-                (props.immaddr ? 'Address: ' + props.immaddr + '<br/>' : '') +
-                (props.flrcount ? 'Floors: ' + props.flrcount + '<br/>' : '') +
-                (props.AREA ? 'Area: ' + props.AREA.toFixed(2) + ' m²<br/>' : '') +
-                (props.functype ? 'Type: ' + props.functype + '<br/>' : '') +
-                (props.green_distance_m !== null && props.green_distance_m !== undefined ? 'Distance to green area: ' + Number(props.green_distance_m).toFixed(2) + ' m<br/>' : '') +
-                (props.supermarket_distance_m !== null && props.supermarket_distance_m !== undefined ? 'Distance to supermarket: ' + Number(props.supermarket_distance_m).toFixed(2) + ' m<br/>' : '') +
-                (props.school_distance_m !== null && props.school_distance_m !== undefined ? 'Distance to school: ' + Number(props.school_distance_m).toFixed(2) + ' m<br/>' : '') +
-                (props.kindergarten_distance_m !== null && props.kindergarten_distance_m !== undefined ? 'Distance to kindergarten: ' + Number(props.kindergarten_distance_m).toFixed(2) + ' m<br/>' : '') +
-                (props.access_distance_m !== null && props.access_distance_m !== undefined ? 'Access distance: ' + Number(props.access_distance_m).toFixed(2) + ' m<br/>' : '') +
-                '</div>';
-            layer.bindPopup(popupContent);
-        }}
-
-        L.geoJSON(buildingsData, {{
-            style: style,
-            onEachFeature: onEachFeature
-        }}).addTo(map);
-
-        // Info control
-        var info = L.control({{position: 'topright'}});
-        info.onAdd = function(map) {{
-            this._div = L.DomUtil.create('div', 'info');
-            this._div.innerHTML = '<h4>Building Polygons</h4>' +
-                '<p>Sofia buildings visualization</p>' +
-                '<p>Residential buildings are colored by distance to the nearest green area</p>' +
-                '<p>Total features: {len(geojson["features"])}</p>';
-            return this._div;
-        }};
-        info.addTo(map);
-    </script>
-</body>
-</html>
-"""
-
-    with open(output_path, 'w', encoding='utf-8') as f:
-        f.write(html_content)
-
 
 def main():
     parser = argparse.ArgumentParser(description='Parse and visualize building polygons')
@@ -595,7 +519,7 @@ def main():
         filter_type=args.filter_type
     )
 
-    print("\n✓ Done!")
+    print("\n Done!")
     if geojson_path:
         print(f"  GeoJSON: {geojson_path}")
     if html_path:

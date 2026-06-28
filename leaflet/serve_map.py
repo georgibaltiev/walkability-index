@@ -20,10 +20,9 @@ def serve(html_file: str, port: int = 8000):
     Handler = http.server.SimpleHTTPRequestHandler
     with socketserver.TCPServer(("", port), Handler) as httpd:
         url = f"http://localhost:{port}/{html_path.name}"
-        print(f"\n🗺️  Server running at: {url}")
+        print(f"Server running at: {url}\n")
         print(f"Press Ctrl+C to stop\n")
 
-        # Try to open in browser
         try:
             webbrowser.open(url)
         except Exception:
