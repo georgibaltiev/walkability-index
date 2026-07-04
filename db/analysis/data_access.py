@@ -52,15 +52,15 @@ def route_shortest_paths(
         SELECT
             start_vid,
             end_vid,
-            MIN(agg_cost) AS min_distance
-        FROM pgr_dijkstra(
+            agg_cost AS min_distance
+        FROM pgr_dijkstraCost(
             'SELECT edge_id AS id, source, target, cost FROM pedestrian_network',
             ARRAY[{','.join(map(str, source_nodes))}],
             ARRAY[{','.join(map(str, target_nodes))}],
             directed := false
         )
-        WHERE agg_cost > 0
-        GROUP BY start_vid, end_vid;
+        WHERE agg_cost >= 0
+        ;
     """
     with engine.connect() as conn:
         return pd.read_sql(text(query), conn)

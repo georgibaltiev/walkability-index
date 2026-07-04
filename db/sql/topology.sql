@@ -4,8 +4,8 @@ ALTER TABLE pedestrian_network ADD COLUMN IF NOT EXISTS target INTEGER;
 ALTER TABLE pedestrian_network ADD COLUMN IF NOT EXISTS cost DOUBLE PRECISION;
 UPDATE pedestrian_network SET cost = ST_Length(geometry);
 
--- 1.0 m snapping tolerance for nearby endpoint segments.
-SELECT pgr_createTopology('pedestrian_network', 1.0, 'geometry', 'edge_id', 'source', 'target');
+-- 2.0 m snapping tolerance for nearby endpoint segments.
+SELECT pgr_createTopology('pedestrian_network', 2.0, 'geometry', 'edge_id', 'source', 'target');
 
 CREATE INDEX IF NOT EXISTS buildings_geom_idx
     ON buildings USING GIST (geometry);

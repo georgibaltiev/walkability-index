@@ -52,12 +52,12 @@ def run(engine: Engine) -> None:
         print(f"Main component id = {main_component_id}.")
 
         for dataset in POINT_OF_INTEREST_GEOJSONS:
-            print(f"Snapping {dataset.table_name} to the main grid (edge-accurate)...")
+            print(f"Snapping {dataset.table_name} to the main grid (nearest vertex)...")
             sql = _load_sql(POINT_SQL_FILE).replace("__TABLE_NAME__", dataset.table_name)
             sql = sql.replace("__ID_COLUMN__", dataset.index_label)
             conn.execute(text(sql), {"main_component_id": main_component_id})
 
-        print("Snapping buildings to the main grid (edge-accurate)...")
+        print("Snapping buildings to the main grid (nearest vertex)...")
         sql = _load_sql(BUILDINGS_SQL_FILE)
         conn.execute(text(sql), {"main_component_id": main_component_id})
         conn.execute(text("DROP TABLE network_components;"))
