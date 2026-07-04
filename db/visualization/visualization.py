@@ -9,7 +9,7 @@ from shapely.geometry import Point
 from sqlalchemy.engine import Engine
 
 from db.config import OUTPUT_DIR, TARGET_CRS, WALKABILITY_MAP_HTML
-from db.pipeline.data_access import load_feature_frame, load_poi_layer
+from db.analysis.data_access import load_feature_frame, load_poi_layer
 
 
 def render_map(engine: Engine) -> None:

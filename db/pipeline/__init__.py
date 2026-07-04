@@ -5,13 +5,13 @@ order; ``db/__main__.py`` consumes this list for the ``all`` subcommand.
 """
 
 from db.pipeline import (
-    install_extensions,
-    introduce_topology,
-    load_geojson_data,
-    map_step,
-    snap_nodes,
-    walkability_step,
+    
 )
+
+from db.analysis import walkability_step
+from db.ingestion import install_extensions, load_geojson_data
+from db.network import introduce_topology, snap_nodes
+from db.visualization import map_step
 
 
 STEPS = [

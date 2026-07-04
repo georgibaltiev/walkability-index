@@ -10,7 +10,7 @@ from db.config import (
     WALKABILITY_CATEGORY_COEFFICIENTS,
     WALKABILITY_DISTANCE_FLOOR_METERS,
 )
-from db.pipeline.data_access import fetch_buildings, fetch_poi_targets, route_shortest_paths
+from db.analysis.data_access import fetch_buildings, fetch_poi_targets, route_shortest_paths
 
 
 CHUNK_SIZE = 50
