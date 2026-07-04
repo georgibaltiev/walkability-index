@@ -75,9 +75,9 @@ WALKABILITY_DECAY_RATE = 0.0015
 WALKABILITY_CATEGORY_COEFFICIENTS = {
     "schools_points": 20.0,
     "parks_and_gardens": 20.0,
-    "hospitals": 25.0,
-    "malls": 13.0,
-    "underground_stops": 22.0,
+    "hospitals": 20.0,
+    "malls": 10.0,
+    "underground_stops": 30.0,
 }
 
 OUTPUT_DIR = REPO_ROOT / "output"
