@@ -1,0 +1,1 @@
+from db.pipeline.visualization import render_map as run

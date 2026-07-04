@@ -74,6 +74,16 @@ POINT_OF_INTEREST_GEOJSONS = (
     ),
 )
 
+
+WALKABILITY_DISTANCE_FLOOR_METERS = 1.0
+WALKABILITY_CATEGORY_COEFFICIENTS = {
+    "schools_points": 1.0,
+    "parks_and_gardens": 1.0,
+    "hospitals": 1.0,
+    "supermarkets": 1.0,
+    "overground_stops": 1.0,
+}
+
 # Output paths.
 OUTPUT_DIR = REPO_ROOT / "output"
 WALKABILITY_MAP_HTML = OUTPUT_DIR / "walkability_map.html"

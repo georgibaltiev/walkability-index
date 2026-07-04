@@ -1,20 +1,20 @@
+from __future__ import annotations
 
 import branca.colormap as cm
 import folium
 import geopandas as gpd
 import pandas as pd
-from typing import cast
-from sqlalchemy import inspect, text
 from folium import GeoJsonTooltip
 from shapely.geometry import Point
 from sqlalchemy.engine import Engine
 
 from db.config import OUTPUT_DIR, TARGET_CRS, WALKABILITY_MAP_HTML
+from db.pipeline.data_access import load_feature_frame, load_poi_layer
 
 
-def run(engine: Engine) -> None:
+def render_map(engine: Engine) -> None:
     print("Fetching data from PostgreSQL...")
-    distance_frame = _load_feature_frame(engine)
+    distance_frame = load_feature_frame(engine)
     buildings_projected = gpd.read_postgis(
         "SELECT building_id, geometry FROM buildings",
         engine, geom_col="geometry", crs=TARGET_CRS,
@@ -27,7 +27,7 @@ def run(engine: Engine) -> None:
         if column_name == "building_id" or not column_name.startswith("distance_to_"):
             continue
         table_name = column_name.removeprefix("distance_to_").removesuffix("_m")
-        poi_frames.append(_load_poi_layer(engine, table_name))
+        poi_frames.append(load_poi_layer(engine, table_name))
 
     points_of_interest = pd.concat(poi_frames, ignore_index=True) if poi_frames else pd.DataFrame()
 
@@ -44,20 +44,18 @@ def run(engine: Engine) -> None:
     colormap.caption = "Distance to Nearest POI (meters)"
 
     projected_centroids = buildings_projected.geometry.centroid
-    center_projected = cast(Point, gpd.GeoSeries(
+    center_projected = gpd.GeoSeries(
         [Point(projected_centroids.x.mean(), projected_centroids.y.mean())],
         crs=TARGET_CRS,
-    ).to_crs("EPSG:4326").iloc[0])
+    ).to_crs("EPSG:4326").iloc[0]
     map_center = [center_projected.y, center_projected.x]
     m = folium.Map(location=map_center, zoom_start=14, tiles="CartoDB positron")
 
     def style(feature):
         dist = feature["properties"]["min_distance_m"]
         if dist is None:
-            return {"fillColor": "#7f8c8d", "color": "#7f8c8d",
-                    "weight": 1, "fillOpacity": 0.4}
-        return {"fillColor": colormap(dist), "color": colormap(dist),
-                "weight": 1, "fillOpacity": 0.7}
+            return {"fillColor": "#7f8c8d", "color": "#7f8c8d", "weight": 1, "fillOpacity": 0.4}
+        return {"fillColor": colormap(dist), "color": colormap(dist), "weight": 1, "fillOpacity": 0.7}
 
     folium.GeoJson(
         buildings,
@@ -82,29 +80,3 @@ def run(engine: Engine) -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     m.save(str(WALKABILITY_MAP_HTML))
     print(f"Map written to {WALKABILITY_MAP_HTML}.")
-
-
-def _load_feature_frame(engine: Engine) -> pd.DataFrame:
-    with engine.connect() as conn:
-        try:
-            return pd.read_sql(text("SELECT * FROM building_walkability_features"), conn)
-        except Exception as exc:
-            raise RuntimeError(
-                "building_walkability_features is missing — run `python -m db walkability` first."
-            ) from exc
-
-
-def _load_poi_layer(engine: Engine, table_name: str) -> pd.DataFrame:
-    inspector = inspect(engine)
-    column_names = {column["name"] for column in inspector.get_columns(table_name)}
-    if "name" in column_names:
-        query = f"SELECT poi_id, name, geometry FROM {table_name}"
-    else:
-        query = f"SELECT poi_id, geometry FROM {table_name}"
-
-    poi_layer = gpd.read_postgis(query, engine, geom_col="geometry", crs=TARGET_CRS).to_crs("EPSG:4326")
-    if "name" in poi_layer.columns:
-        poi_layer["display_name"] = poi_layer["name"].fillna(table_name)
-    else:
-        poi_layer["display_name"] = table_name
-    return poi_layer
