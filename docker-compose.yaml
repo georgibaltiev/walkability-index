@@ -1,17 +1,20 @@
 services:
   db:
-    image: postgres
+    image: pgrouting/pgrouting:16-3.5-3.7.3
     restart: always
     environment:
-      POSTGRES_PASSWORD: example
+      POSTGRES_PASSWORD: mysecretpassword
+      POSTGRES_DB: gis_db
+    ports:
+      - "5432:5432"
     volumes:
-      - pgdata:/Users/georgibaltiev/github.com/walkability-index/data
- 
+      - pgdata:/var/lib/postgresql/data
+
   adminer:
     image: adminer
     restart: always
     ports:
       - 8080:8080
- 
+
 volumes:
   pgdata:
