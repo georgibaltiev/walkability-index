@@ -10,8 +10,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 load_dotenv(REPO_ROOT / ".env")
 
-
-# UTM Zone 34N — projected CRS used for all metric calculations in Sofia.
 TARGET_CRS = "EPSG:32634"
 
 
@@ -43,8 +41,6 @@ settings = DBSettings(
     name=os.environ.get("DB_NAME", "gis_db"),
 )
 
-
-# Default input data paths used by the load step.
 DATA_DIR = REPO_ROOT / "data"
 GEOJSON_DIR = DATA_DIR / "geojson"
 BUILDINGS_GEOJSON = DATA_DIR / "geojson" / "buildings" / "buildings.geojson"
@@ -52,6 +48,10 @@ PEDESTRIAN_NETWORK_GEOJSON = DATA_DIR / "geojson" / "pedestrian_network.geojson"
 
 
 POINT_OF_INTEREST_GEOJSONS = (
+    GeoJSONDataset(
+        table_name="underground_stops",
+        path=GEOJSON_DIR / "transit" / "underground_stops.geojson",
+    ),
     GeoJSONDataset(
         table_name="schools_points",
         path=GEOJSON_DIR / "education" / "schools_points.geojson",
@@ -65,25 +65,20 @@ POINT_OF_INTEREST_GEOJSONS = (
         path=GEOJSON_DIR / "health" / "hospitals.geojson",
     ),
     GeoJSONDataset(
-        table_name="supermarkets",
-        path=GEOJSON_DIR / "services" / "supermarkets.geojson",
-    ),
-    GeoJSONDataset(
-        table_name="overground_stops",
-        path=GEOJSON_DIR / "transit" / "overground_stops.geojson",
+        table_name="malls",
+        path=GEOJSON_DIR / "services" / "malls.geojson",
     ),
 )
 
 
 WALKABILITY_DISTANCE_FLOOR_METERS = 1.0
 WALKABILITY_CATEGORY_COEFFICIENTS = {
-    "schools_points": 1.0,
-    "parks_and_gardens": 1.0,
-    "hospitals": 1.0,
-    "supermarkets": 1.0,
-    "overground_stops": 1.0,
+    "schools_points": 20.0,
+    "parks_and_gardens": 20.0,
+    "hospitals": 25.0,
+    "malls": 13.0,
+    "underground_stops": 22.0,
 }
 
-# Output paths.
 OUTPUT_DIR = REPO_ROOT / "output"
 WALKABILITY_MAP_HTML = OUTPUT_DIR / "walkability_map.html"

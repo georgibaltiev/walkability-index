@@ -1,26 +1,18 @@
-"""Ordered pipeline steps.
-
-Each step exposes a ``run(engine)`` callable. ``STEPS`` lists them in execution
-order; ``db/__main__.py`` consumes this list for the ``all`` subcommand.
-"""
-
-from db.pipeline import (
-    
-)
-
-from db.analysis import walkability_step
-from db.ingestion import install_extensions, load_geojson_data
-from db.network import introduce_topology, snap_nodes
-from db.visualization import map_step
+from db.analysis.walkability_step import run as walkability_run
+from db.ingestion.install_extensions import run as install_extensions_run
+from db.ingestion.load_geojson_data import run as load_geojson_data_run
+from db.network.introduce_topology import run as introduce_topology_run
+from db.network.snap_nodes import run as snap_nodes_run
+from db.visualization.map_step import run as map_run
 
 
 STEPS = [
-    ("extensions", install_extensions.run),
-    ("load",       load_geojson_data.run),
-    ("topology",   introduce_topology.run),
-    ("snap",       snap_nodes.run),
-    ("walkability", walkability_step.run),
-    ("map",        map_step.run),
+    ("extensions", install_extensions_run),
+    ("load", load_geojson_data_run),
+    ("topology", introduce_topology_run),
+    ("snap", snap_nodes_run),
+    ("walkability", walkability_run),
+    ("map", map_run),
 ]
 
 STEP_MAP = dict(STEPS)

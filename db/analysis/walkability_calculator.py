@@ -1,21 +1,18 @@
 from __future__ import annotations
 
 from typing import Mapping, Optional
-
 import pandas as pd
 from sqlalchemy.engine import Engine
 
 from db.config import (
     POINT_OF_INTEREST_GEOJSONS,
-    WALKABILITY_CATEGORY_COEFFICIENTS,
     WALKABILITY_DISTANCE_FLOOR_METERS,
+    WALKABILITY_CATEGORY_COEFFICIENTS,
 )
 from db.analysis.data_access import fetch_buildings, fetch_poi_targets, route_shortest_paths
 
-
 CHUNK_SIZE = 50
 TARGET_CHUNK_SIZE = 50
-
 
 def build_distance_frame(engine: Engine) -> pd.DataFrame:
     if not POINT_OF_INTEREST_GEOJSONS:
@@ -45,13 +42,24 @@ def build_distance_frame(engine: Engine) -> pd.DataFrame:
 def calculate_walkability_index(
     distance_frame: pd.DataFrame,
     coefficients: Mapping[str, float] | None = None,
+    distance_floor_meters: float = WALKABILITY_DISTANCE_FLOOR_METERS,
 ) -> pd.DataFrame:
+    """Computes a walkability index scaled from 0 to 100.
+
+    Formula per category i with coefficient c_i and distance d_i:
+    contribution_i = c_i * (1 / max(d_i, floor))
+    walkability_index = 100 * sum(contribution_i) / sum(c_i * (1 / floor))
+    """
     applied_coefficients = dict(WALKABILITY_CATEGORY_COEFFICIENTS)
     if coefficients is not None:
         applied_coefficients.update(coefficients)
 
     scored = distance_frame.copy()
-    contribution_columns: list[str] = []
+
+    total_weighted_inverse = pd.Series(0.0, index=scored.index)
+    total_possible_inverse = 0.0
+
+    safe_floor = max(float(distance_floor_meters), 1e-9)
 
     for dataset in POINT_OF_INTEREST_GEOJSONS:
         coefficient = applied_coefficients.get(dataset.table_name)
@@ -62,18 +70,24 @@ def calculate_walkability_index(
         if distance_column not in scored.columns:
             continue
 
-        contribution_column = f"{dataset.table_name}_weight"
-        safe_distance = (
-            pd.to_numeric(scored[distance_column], errors="coerce")
-            .clip(lower=WALKABILITY_DISTANCE_FLOOR_METERS)
-        )
-        scored[contribution_column] = coefficient / safe_distance
-        contribution_columns.append(contribution_column)
+        raw_distances = pd.to_numeric(scored[distance_column], errors="coerce")
 
-    if contribution_columns:
-        scored["walkability_index"] = scored[contribution_columns].sum(axis=1, min_count=1)
+        clamped_distances = raw_distances.clip(lower=safe_floor)
+        inverse_distance = 1.0 / clamped_distances
+        inverse_distance = inverse_distance.where(raw_distances.notna(), 0.0)
+
+        contribution_column = f"{dataset.table_name}_weight"
+        scored[contribution_column] = inverse_distance
+
+        total_weighted_inverse += coefficient * inverse_distance
+        total_possible_inverse += coefficient * (1.0 / safe_floor)
+
+    if total_possible_inverse > 0:
+        scored["walkability_index"] = (total_weighted_inverse / total_possible_inverse) * 100.0
     else:
         scored["walkability_index"] = 0.0
+
+    scored["walkability_index"] = scored["walkability_index"].clip(lower=0.0, upper=100.0)
 
     return scored
 

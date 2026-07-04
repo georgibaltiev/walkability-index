@@ -9,8 +9,6 @@ SELECT pgr_createTopology('pedestrian_network', 1.0, 'geometry', 'edge_id', 'sou
 
 CREATE INDEX IF NOT EXISTS buildings_geom_idx
     ON buildings USING GIST (geometry);
-CREATE INDEX IF NOT EXISTS supermarkets_geom_idx
-    ON supermarkets USING GIST (geometry);
 CREATE INDEX IF NOT EXISTS pedestrian_network_geom_idx
     ON pedestrian_network USING GIST (geometry);
 CREATE INDEX IF NOT EXISTS pedestrian_network_vertices_idx

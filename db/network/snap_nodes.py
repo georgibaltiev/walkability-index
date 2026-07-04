@@ -13,6 +13,13 @@ BUILDINGS_SQL_FILE = SQL_DIR / "snap_buildings.sql"
 
 def run(engine: Engine) -> None:
     with engine.begin() as conn:
+        print("Ensuring snap columns exist...")
+        conn.execute(text("ALTER TABLE buildings ADD COLUMN IF NOT EXISTS nearest_node INTEGER;"))
+        for dataset in POINT_OF_INTEREST_GEOJSONS:
+            conn.execute(text(
+                f"ALTER TABLE {dataset.table_name} ADD COLUMN IF NOT EXISTS nearest_node INTEGER;"
+            ))
+
         print("Resetting prior snap metrics...")
         conn.execute(text(
             "UPDATE buildings SET nearest_node = NULL "

@@ -2,12 +2,9 @@ from __future__ import annotations
 
 from typing import Sequence
 
-import geopandas as gpd
 import pandas as pd
-from sqlalchemy import inspect, text
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
-
-from db.config import TARGET_CRS
 
 
 def fetch_buildings(engine: Engine) -> pd.DataFrame:
@@ -76,19 +73,3 @@ def load_feature_frame(engine: Engine) -> pd.DataFrame:
 
 def persist_feature_frame(engine: Engine, feature_frame: pd.DataFrame) -> None:
     feature_frame.to_sql("building_walkability_features", engine, if_exists="replace", index=False)
-
-
-def load_poi_layer(engine: Engine, table_name: str) -> pd.DataFrame:
-    inspector = inspect(engine)
-    column_names = {column["name"] for column in inspector.get_columns(table_name)}
-    if "name" in column_names:
-        query = f"SELECT poi_id, name, geometry FROM {table_name}"
-    else:
-        query = f"SELECT poi_id, geometry FROM {table_name}"
-
-    poi_layer = gpd.read_postgis(query, engine, geom_col="geometry", crs=TARGET_CRS).to_crs("EPSG:4326")
-    if "name" in poi_layer.columns:
-        poi_layer["display_name"] = poi_layer["name"].fillna(table_name)
-    else:
-        poi_layer["display_name"] = table_name
-    return poi_layer
