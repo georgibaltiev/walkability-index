@@ -36,8 +36,8 @@ def render_map(engine: Engine) -> None:
     ).clip(lower=0.0, upper=100.0)
 
     colormap = cm.LinearColormap(
-        colors=["#e74c3c", "#3498db"], vmin=0, vmax=100,
-    ).to_step(n=6)
+        colors=["#e74c3c", "#f1c40f", "#2ecc71", "#3498db"], vmin=0, vmax=100,
+    ).to_step(n=8)
     colormap.caption = "Walkability Index (0-100)"
 
     m = folium.Map(location=map_center, zoom_start=14, tiles="CartoDB positron")
