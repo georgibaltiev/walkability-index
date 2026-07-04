@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 from typing import Mapping, Optional
+import numpy as np
 import pandas as pd
 from sqlalchemy.engine import Engine
 
 from db.config import (
     POINT_OF_INTEREST_GEOJSONS,
-    WALKABILITY_DISTANCE_FLOOR_METERS,
-    WALKABILITY_NORMALIZATION_LOWER_QUANTILE,
-    WALKABILITY_NORMALIZATION_UPPER_QUANTILE,
+    WALKABILITY_DECAY_RATE,
     WALKABILITY_CATEGORY_COEFFICIENTS,
 )
 from db.analysis.data_access import fetch_buildings, fetch_poi_targets, route_shortest_paths
@@ -44,27 +43,17 @@ def build_distance_frame(engine: Engine) -> pd.DataFrame:
 def calculate_walkability_index(
     distance_frame: pd.DataFrame,
     coefficients: Mapping[str, float] | None = None,
-    distance_floor_meters: float = WALKABILITY_DISTANCE_FLOOR_METERS,
-    lower_quantile: float = WALKABILITY_NORMALIZATION_LOWER_QUANTILE,
-    upper_quantile: float = WALKABILITY_NORMALIZATION_UPPER_QUANTILE,
+    decay_rate: float = WALKABILITY_DECAY_RATE,
 ) -> pd.DataFrame:
-    """Computes a walkability index scaled from 0 to 100.
-
-    Formula per category i with coefficient c_i and distance d_i:
-    contribution_i = c_i * (1 / max(d_i, floor))
-
-    The raw weighted score is stretched against the observed distribution of
-    positive scores so the final index uses more of the 0 to 100 range.
-    """
     applied_coefficients = dict(WALKABILITY_CATEGORY_COEFFICIENTS)
     if coefficients is not None:
         applied_coefficients.update(coefficients)
 
     scored = distance_frame.copy()
 
-    total_weighted_inverse = pd.Series(0.0, index=scored.index)
-
-    safe_floor = max(float(distance_floor_meters), 1e-9)
+    total_weighted_decay = pd.Series(0.0, index=scored.index)
+    total_weight = 0.0
+    safe_decay_rate = max(float(decay_rate), 1e-12)
 
     for dataset in POINT_OF_INTEREST_GEOJSONS:
         coefficient = applied_coefficients.get(dataset.table_name)
@@ -76,25 +65,19 @@ def calculate_walkability_index(
             continue
 
         raw_distances = pd.to_numeric(scored[distance_column], errors="coerce")
-
-        clamped_distances = raw_distances.clip(lower=safe_floor)
-        inverse_distance = 1.0 / clamped_distances
-        inverse_distance = inverse_distance.where(raw_distances.notna(), 0.0)
+        decay_factor = pd.Series(
+            np.where(raw_distances.notna(), np.exp(-safe_decay_rate * raw_distances), 0.0),
+            index=scored.index,
+        )
 
         contribution_column = f"{dataset.table_name}_weight"
-        scored[contribution_column] = inverse_distance
+        scored[contribution_column] = decay_factor
 
-        total_weighted_inverse += coefficient * inverse_distance
+        total_weighted_decay += coefficient * decay_factor
+        total_weight += coefficient
 
-    positive_scores = total_weighted_inverse[total_weighted_inverse > 0]
-    if not positive_scores.empty:
-        lower_bound = float(positive_scores.quantile(lower_quantile))
-        upper_bound = float(positive_scores.quantile(upper_quantile))
-
-        if upper_bound > lower_bound:
-            scored["walkability_index"] = ((total_weighted_inverse - lower_bound) / (upper_bound - lower_bound)) * 100.0
-        else:
-            scored["walkability_index"] = pd.Series(100.0, index=scored.index)
+    if total_weight > 0:
+        scored["walkability_index"] = 100.0 * total_weighted_decay / total_weight
     else:
         scored["walkability_index"] = 0.0
 
